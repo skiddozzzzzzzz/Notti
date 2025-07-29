@@ -58,7 +58,7 @@ codeBox.TextYAlignment = Enum.TextYAlignment.Top
 codeBox.TextSize = 16
 codeBox.TextColor3 = Color3.fromRGB(255, 255, 255)
 codeBox.Font = Enum.Font.Code
-codeBox.Text = "print("E4N")"
+codeBox.Text = ""
 codeBox.Parent = scrollFrame
 
 local function createButton(name, text, position, parent)
