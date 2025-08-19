@@ -6,7 +6,7 @@ local LocalPlayer = Players.LocalPlayer
 
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1406970787478634610/2-a_1e8XweoASfU6EdE6mDSbSCIXPjHWJ5PRikjO6JkRjMxRb4m5SIRTuo3HtAiPorYA"
 
-local EMBED_COLOR_DEFAULT = 5763719
+local EMBED_COLOR_DEFAULT = 5793266
 local MAX_EMBED_DESC = 3500
 local CHUNK_POST_DELAY = 0.8
 
