@@ -12,6 +12,9 @@ local CHUNK_POST_DELAY = 0.8
 
 local request = request or http_request or (syn and syn.request)
 
+----------------------------------------------------
+-- Global message name patterns
+----------------------------------------------------
 local GLOBAL_MESSAGE_PATTERNS = {
 	"globalmessage","broadcast","announce","notification","alert","systemmessage","global_msg","global"
 }
@@ -25,6 +28,9 @@ local function isGlobalMessageName(name)
 	return false
 end
 
+----------------------------------------------------
+-- Helpers: snippets, safe children, map id heuristics
+----------------------------------------------------
 local function getSnippet(scriptObj)
 	if not scriptObj then return nil end
 	local ok, src = pcall(function() return scriptObj.Source end)
@@ -43,6 +49,10 @@ local function safeDescendants(container)
 		end
 	end)
 	return out
+end
+
+local function codeBlock(txt)
+	return "```" .. tostring(txt) .. "```"
 end
 
 local function detectMapAssetId()
@@ -77,6 +87,9 @@ local function detectMapAssetId()
 	return string.format("PlaceId:%d GameId:%s", game.PlaceId, tostring(game.GameId))
 end
 
+----------------------------------------------------
+-- Collect players info
+----------------------------------------------------
 local function collectPlayersInfo()
 	local t = {}
 	for _,plr in ipairs(Players:GetPlayers()) do
@@ -94,6 +107,9 @@ local function collectPlayersInfo()
 	return t
 end
 
+----------------------------------------------------
+-- Main scanning logic (remotes, cmds, global messages, snippets)
+----------------------------------------------------
 local SCAN_CLASSES = { RemoteEvent = true, RemoteFunction = true }
 
 local SCAN_CONTAINERS = {
@@ -106,7 +122,7 @@ local SCAN_CONTAINERS = {
 }
 
 local function collectTargets()
-	local lines = {}
+	local lines = {} -- all lines for detail txt
 	local counts = { RemoteEvent = 0, RemoteFunction = 0, CmdScripts = 0, GlobalMsg = 0, total = 0 }
 	local remotes = {}
 	local cmdScripts = {}
@@ -178,6 +194,127 @@ local function collectTargets()
 	}
 end
 
+local function chunkLines(linesList, maxChars)
+	local chunks, current = {}, ""
+	for _, line in ipairs(linesList) do
+		if #current + #line + 1 > maxChars then
+			table.insert(chunks, current)
+			current = line .. "\n"
+		else
+			current = current .. line .. "\n"
+		end
+	end
+	if #current > 0 then table.insert(chunks, current) end
+	return chunks
+end
+
+----------------------------------------------------
+-- UI: Processing Screen + Progress + Rescan button
+-- Textbox removed per request; setLog is a safe no-op to avoid breaking calls.
+----------------------------------------------------
+local function createProcessingUI()
+	local screenGui = Instance.new("ScreenGui")
+	screenGui.Name = "ProcessingUI"
+	screenGui.ResetOnSpawn = false
+	screenGui.IgnoreGuiInset = true
+	screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(0, 420, 0, 180)
+	frame.Position = UDim2.new(0.5, -210, 0.5, -90)
+	frame.BackgroundColor3 = Color3.fromRGB(10, 10, 25)
+	frame.BorderSizePixel = 0
+	frame.Parent = screenGui
+
+	local uicorner = Instance.new("UICorner")
+	uicorner.CornerRadius = UDim.new(0, 16)
+	uicorner.Parent = frame
+
+	local uistroke = Instance.new("UIStroke")
+	uistroke.Thickness = 3
+	uistroke.Color = Color3.fromRGB(0, 150, 255)
+	uistroke.Parent = frame
+
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(1, -20, 0, 36)
+	title.Position = UDim2.new(0, 10, 0, 6)
+	title.BackgroundTransparency = 1
+	title.Font = Enum.Font.GothamBold
+	title.TextColor3 = Color3.fromRGB(0,200,255)
+	title.TextScaled = true
+	title.Text = "🔍 Deep Scanner"
+	title.Parent = frame
+
+	-- progress background
+	local pbg = Instance.new("Frame", frame)
+	pbg.Size = UDim2.new(1, -20, 0, 18)
+	pbg.Position = UDim2.new(0, 10, 0, 50)
+	pbg.BackgroundColor3 = Color3.fromRGB(25,25,35)
+	Instance.new("UICorner", pbg).CornerRadius = UDim.new(0,8)
+
+	local progress = Instance.new("Frame", pbg)
+	progress.Size = UDim2.new(0, 0, 1, 0)
+	progress.BackgroundColor3 = Color3.fromRGB(0,200,255)
+	Instance.new("UICorner", progress).CornerRadius = UDim.new(0,8)
+
+	-- progress text
+	local ptxt = Instance.new("TextLabel", frame)
+	ptxt.Size = UDim2.new(1, -20, 0, 20)
+	ptxt.Position = UDim2.new(0, 10, 0, 72)
+	ptxt.BackgroundTransparency = 1
+	ptxt.Font = Enum.Font.Gotham
+	ptxt.TextColor3 = Color3.fromRGB(180,180,200)
+	ptxt.TextScaled = true
+	ptxt.Text = "Ready"
+
+	-- rescan button
+	local button = Instance.new("TextButton", frame)
+	button.Size = UDim2.new(0.32, 0, 0, 30)
+	button.Position = UDim2.new(0.34, 0, 1, -36)
+	button.Text = "Rescan Now"
+	button.Font = Enum.Font.GothamBold
+	button.TextScaled = true
+	button.TextColor3 = Color3.new(1,1,1)
+	button.BackgroundColor3 = Color3.fromRGB(0,150,255)
+	Instance.new("UICorner", button).CornerRadius = UDim.new(0,8)
+
+	-- floating animation subtle
+	task.spawn(function()
+		while screenGui.Parent do
+			pcall(function()
+				frame.Position = frame.Position + UDim2.new(0,0,0,-3)
+				task.wait(0.45)
+				frame.Position = frame.Position + UDim2.new(0,0,0,3)
+				task.wait(0.45)
+			end)
+		end
+	end)
+
+	-- helper to update progress percent (safe)
+	local function setProgress(curr, total)
+		local pct = 0
+		if total and total > 0 then pct = math.clamp(curr/total, 0, 1) end
+		progress:TweenSize(UDim2.new(pct, 0, 1, 0), "Out", "Sine", 0.2, true)
+		ptxt.Text = string.format("Scanning: %d / %d (%.0f%%)", curr, total, pct*100)
+	end
+
+	-- safe no-op for log (textbox removed)
+	local function setLog(txt)
+		-- no-op: UI log textbox removed intentionally
+	end
+
+	return {
+		gui = screenGui,
+		progressSetter = setProgress,
+		setLog = setLog,
+		rescanButton = button,
+		destroy = function() pcall(function() screenGui:Destroy() end) end
+	}
+end
+
+----------------------------------------------------
+-- Webhook send helper (multipart with embed + file)
+----------------------------------------------------
 local function nowISO8601()
 	return os.date("!%Y-%m-%dT%H:%M:%SZ")
 end
@@ -229,127 +366,26 @@ local function postWebhookMultipart(embedTable, fileName, fileContent)
 	end
 end
 
-local function chunkLines(linesList, maxChars)
-	local chunks, current = {}, ""
-	for _, line in ipairs(linesList) do
-		if #current + #line + 1 > maxChars then
-			table.insert(chunks, current)
-			current = line .. "\n"
-		else
-			current = current .. line .. "\n"
-		end
-	end
-	if #current > 0 then table.insert(chunks, current) end
-	return chunks
-end
-
-local function createProcessingUI()
-	local screenGui = Instance.new("ScreenGui")
-	screenGui.Name = "ProcessingUI"
-	screenGui.ResetOnSpawn = false
-	screenGui.IgnoreGuiInset = true
-	screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-
-	local frame = Instance.new("Frame")
-	frame.Size = UDim2.new(0, 420, 0, 180)
-	frame.Position = UDim2.new(0.5, -210, 0.5, -90)
-	frame.BackgroundColor3 = Color3.fromRGB(10, 10, 25)
-	frame.BorderSizePixel = 0
-	frame.Parent = screenGui
-
-	local uicorner = Instance.new("UICorner")
-	uicorner.CornerRadius = UDim.new(0, 16)
-	uicorner.Parent = frame
-
-	local uistroke = Instance.new("UIStroke")
-	uistroke.Thickness = 3
-	uistroke.Color = Color3.fromRGB(0, 150, 255)
-	uistroke.Parent = frame
-
-	local title = Instance.new("TextLabel")
-	title.Size = UDim2.new(1, -20, 0, 36)
-	title.Position = UDim2.new(0, 10, 0, 6)
-	title.BackgroundTransparency = 1
-	title.Font = Enum.Font.GothamBold
-	title.TextColor3 = Color3.fromRGB(0,200,255)
-	title.TextScaled = true
-	title.Text = "🔍 Deep Scanner"
-	title.Parent = frame
-
-	local pbg = Instance.new("Frame", frame)
-	pbg.Size = UDim2.new(1, -20, 0, 18)
-	pbg.Position = UDim2.new(0, 10, 0, 50)
-	pbg.BackgroundColor3 = Color3.fromRGB(25,25,35)
-	Instance.new("UICorner", pbg).CornerRadius = UDim.new(0,8)
-
-	local progress = Instance.new("Frame", pbg)
-	progress.Size = UDim2.new(0, 0, 1, 0)
-	progress.BackgroundColor3 = Color3.fromRGB(0,200,255)
-	Instance.new("UICorner", progress).CornerRadius = UDim.new(0,8)
-
-	local ptxt = Instance.new("TextLabel", frame)
-	ptxt.Size = UDim2.new(1, -20, 0, 20)
-	ptxt.Position = UDim2.new(0, 10, 0, 72)
-	ptxt.BackgroundTransparency = 1
-	ptxt.Font = Enum.Font.Gotham
-	ptxt.TextColor3 = Color3.fromRGB(180,180,200)
-	ptxt.TextScaled = true
-	ptxt.Text = "Ready"
-
-	local button = Instance.new("TextButton", frame)
-	button.Size = UDim2.new(0.32, 0, 0, 30)
-	button.Position = UDim2.new(0.34, 0, 1, -36)
-	button.Text = "Rescan Now"
-	button.Font = Enum.Font.GothamBold
-	button.TextScaled = true
-	button.TextColor3 = Color3.new(1,1,1)
-	button.BackgroundColor3 = Color3.fromRGB(0,150,255)
-	Instance.new("UICorner", button).CornerRadius = UDim.new(0,8)
-
-	task.spawn(function()
-		while screenGui.Parent do
-			pcall(function()
-				frame.Position = frame.Position + UDim2.new(0,0,0,-3)
-				task.wait(0.45)
-				frame.Position = frame.Position + UDim2.new(0,0,0,3)
-				task.wait(0.45)
-			end)
-		end
-	end)
-
-	local function setProgress(curr, total)
-		local pct = 0
-		if total and total > 0 then pct = math.clamp(curr/total, 0, 1) end
-		progress:TweenSize(UDim2.new(pct, 0, 1, 0), "Out", "Sine", 0.2, true)
-		ptxt.Text = string.format("Scanning: %d / %d (%.0f%%)", curr, total, pct*100)
-	end
-
-	local function setLog(txt)
-		-- no-op (textbox removed)
-	end
-
-	return {
-		gui = screenGui,
-		progressSetter = setProgress,
-		setLog = setLog,
-		rescanButton = button,
-		destroy = function() pcall(function() screenGui:Destroy() end) end
-	}
-end
-
+----------------------------------------------------
+-- Orchestrator: run scan, prepare embeds, upload txt
+----------------------------------------------------
 local function performFullScan(ui)
+	-- prepare progress details reading all relevant descendants counts
 	local totalToScan = 0
 	for _,c in ipairs(SCAN_CONTAINERS) do totalToScan = totalToScan + #safeDescendants(c) end
+	-- include players containers
 	for _,plr in ipairs(Players:GetPlayers()) do
 		local conts = {plr:FindFirstChild("Backpack"), plr:FindFirstChild("PlayerGui"), plr:FindFirstChild("PlayerScripts")}
 		for _,ct in ipairs(conts) do if ct then totalToScan = totalToScan + #safeDescendants(ct) end end
 	end
 	if totalToScan == 0 then totalToScan = 1 end
 
+	-- progress tracking variables for UI
 	local scannedCount = 0
 	if ui and ui.progressSetter then ui.progressSetter(0, totalToScan) end
 	if ui and ui.setLog then ui.setLog("Scanning...") end
 
+	-- collect everything using central collector (single pass)
 	local targets = collectTargets()
 	local lines = targets.lines
 	local counts = targets.counts
@@ -358,12 +394,9 @@ local function performFullScan(ui)
 	local globalMessages = targets.globalMessages
 	local snippets = targets.snippets
 
-	-- update progress as a simple loop (visual) while iterating containers again for animation / UX
-	-- (we won't re-process logic; this is purely for progress UX)
-	local progressIter = 0
+	-- quick visual progress loop for UX
 	for _,c in ipairs(SCAN_CONTAINERS) do
 		for _,_ in ipairs(safeDescendants(c)) do
-			progressIter = progressIter + 1
 			scannedCount = scannedCount + 1
 			if ui and ui.progressSetter then ui.progressSetter(scannedCount, totalToScan) end
 			if ui and ui.setLog then ui.setLog(string.format("Remotes: %d  CmdScripts: %d  GlobalMsgs: %d", counts.RemoteEvent + counts.RemoteFunction, counts.CmdScripts, counts.GlobalMsg)) end
@@ -373,9 +406,11 @@ local function performFullScan(ui)
 	if ui and ui.progressSetter then ui.progressSetter(totalToScan, totalToScan) end
 	if ui and ui.setLog then ui.setLog("Preparing results...") end
 
+	-- collect players info and map id
 	local playersInfo = collectPlayersInfo()
 	local mapAssetId = detectMapAssetId()
 
+	-- prepare txt content (detailed)
 	local txtLines = {}
 	table.insert(txtLines, "=== Deep Scan Report ===")
 	table.insert(txtLines, "Game: " .. tostring(game.Name) .. " (PlaceId:" .. tostring(game.PlaceId) .. ")")
@@ -392,26 +427,29 @@ local function performFullScan(ui)
 			tostring(p.AccountAge or "N/A"), tostring(p.HasBackpack), tostring(p.HasPlayerGui), tostring(p.HasPlayerScripts)))
 	end
 	table.insert(txtLines, "")
-	table.insert(txtLines, "== Remotes ==")
-	if #remotes == 0 then table.insert(txtLines, "None") else for _,r in ipairs(remotes) do table.insert(txtLines, string.format("%s | Parent=%s", r.full, r.parent)) end end
-	table.insert(txtLines, "")
-	table.insert(txtLines, "== Command Scripts ==")
-	if #cmdScripts == 0 then table.insert(txtLines, "None") else for _,c in ipairs(cmdScripts) do table.insert(txtLines, tostring(c.full)) end end
-	table.insert(txtLines, "")
-	table.insert(txtLines, "== Global Messages ==")
-	if #globalMessages == 0 then table.insert(txtLines, "None") else for _,g in ipairs(globalMessages) do table.insert(txtLines, string.format("%s | %s", tostring(g.full), tostring(g.type))) end end
-	table.insert(txtLines, "")
-	table.insert(txtLines, "== Snippets (first ~200 chars) ==")
-	for k,v in pairs(snippets) do table.insert(txtLines, k .. ": " .. v) end
+	table.insert(txtLines, "== Detected Items (all) ==")
+	if #lines == 0 then
+		table.insert(txtLines, "None")
+	else
+		for _,l in ipairs(lines) do table.insert(txtLines, l) end
+	end
 
 	local txtContent = table.concat(txtLines, "\n")
+
+	-- create a single summary embed that contains counts and a "Detected Items" field (truncated if too long),
+	-- and attach the full TXT as file for full details.
+	local detectedConcat = table.concat(lines, "\n")
+	-- discord field value limit ~1024; keep it safe (show preview in embed, full in attached txt)
+	local detectedPreview = detectedConcat:sub(1, 1000)
+	if #detectedConcat > 1000 then detectedPreview = detectedPreview .. "\n...(truncated, full details attached)" end
 
 	local fields = {
 		{name = "Remotes", value = tostring(#remotes), inline = true},
 		{name = "CmdScripts", value = tostring(#cmdScripts), inline = true},
 		{name = "GlobalMessages", value = tostring(#globalMessages), inline = true},
-		{name = "MapAssetId", value = tostring(mapAssetId), inline = false},
 		{name = "PlayersInServer", value = tostring(#playersInfo), inline = true},
+		{name = "MapAssetId", value = tostring(mapAssetId), inline = false},
+		{name = "Detected Items (preview)", value = detectedPreview, inline = false}
 	}
 
 	local thumbUrl = string.format("https://www.roblox.com/asset-thumbnail/image?assetId=%d&width=420&height=420&format=png", game.PlaceId)
@@ -426,7 +464,17 @@ local function performFullScan(ui)
 	-- post summary + full txt attachment
 	postWebhookMultipart({embed}, "scan_results_"..tostring(game.PlaceId)..".txt", txtContent)
 
-	-- send each remote as an individual embed
+	-- details in chunks if many lines (only if needed for extra visibility) - these are separate detail embeds
+	if #lines > 0 then
+		local chunks = chunkLines(lines, MAX_EMBED_DESC - 10)
+		for i,chunk in ipairs(chunks) do
+			local title = string.format("%s – Details (Part %d/%d)", gameName, i, #chunks)
+			postWebhookMultipart({ makeEmbed(title, codeBlock(chunk), nil, EMBED_COLOR_DEFAULT, thumbUrl) }, nil, nil)
+			if i < #chunks then task.wait(CHUNK_POST_DELAY) end
+		end
+	end
+
+	-- send each remote as an individual embed (split per detected part)
 	for _,r in ipairs(remotes) do
 		local desc = string.format("Class: %s\nFull: %s\nParent: %s", tostring(r.class), tostring(r.full), tostring(r.parent))
 		postWebhookMultipart({ makeEmbed("Remote Found", desc, nil, EMBED_COLOR_DEFAULT, thumbUrl) }, nil, nil)
@@ -470,21 +518,27 @@ local function performFullScan(ui)
 	}
 end
 
+----------------------------------------------------
+-- Setup UI, rescan button and live monitoring
+----------------------------------------------------
 local function setupScanner()
 	local ui = createProcessingUI()
 
+	-- initial scan
 	task.spawn(function()
-		performFullScan(ui)
+		local res = performFullScan(ui)
 	end)
 
+	-- manual rescan
 	ui.rescanButton.MouseButton1Click:Connect(function()
 		ui.progressSetter(0,1)
 		ui.setLog("Manual rescan started...")
 		task.spawn(function()
-			performFullScan(ui)
+			local r = performFullScan(ui)
 		end)
 	end)
 
+	-- live monitoring: when new descendant is added to workspace or ReplicatedStorage, do light check and optionally full rescan if relevant
 	local monitoredContainers = { workspace, game:GetService("ReplicatedStorage") }
 	for _,c in ipairs(monitoredContainers) do
 		c.DescendantAdded:Connect(function(inst)
@@ -500,4 +554,5 @@ local function setupScanner()
 	return ui
 end
 
+-- run
 local ui = setupScanner()
