@@ -1,5 +1,5 @@
 local gui = Instance.new("ScreenGui")
-gui.Name = "NottiSS"
+gui.Name = "Notti Executor"
 gui.ResetOnSpawn = false
 gui.Parent = game:GetService("CoreGui")
 
@@ -22,7 +22,7 @@ border.Color = Color3.fromRGB(255, 0, 0)
 
 local title = Instance.new("TextLabel")
 title.Name = "Title"
-title.Text = "Notti SS"
+title.Text = "Notti Executor"
 title.Font = Enum.Font.GothamBold
 title.TextSize = 20
 title.TextColor3 = Color3.fromRGB(255, 50, 50)
@@ -58,7 +58,7 @@ codeBox.TextYAlignment = Enum.TextYAlignment.Top
 codeBox.TextSize = 16
 codeBox.TextColor3 = Color3.fromRGB(255, 255, 255)
 codeBox.Font = Enum.Font.Code
-codeBox.Text = ""
+codeBox.Text = "--created by Jdot"
 codeBox.Parent = scrollFrame
 
 local function createButton(name, text, position, parent)
